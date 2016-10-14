@@ -1,11 +1,16 @@
 #define _GNU_SOURCE 1
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/resource.h>
+#include <sys/time.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sched.h>
-#include <cstring>
+#include <dirent.h>
+#include <signal.h>
 
+#include <cstring>
+#include <cassert>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -13,8 +18,15 @@
 #include <sstream>
 #include <exception>
 #include <stdexcept>
+#include <algorithm>
+
+#include "shmem.hpp"
+#include "measurement.hpp"
+#include "tasks.hpp"
 
 using std::strtok;
+
+static int ncpu;
 
 template<class T>
 auto operator<<(std::ostream& os, const T& t) -> decltype(t.print(os), os)
@@ -23,15 +35,75 @@ auto operator<<(std::ostream& os, const T& t) -> decltype(t.print(os), os)
     return os;
 }
 
-static void set_own_affinity(int cpu)
+static void set_affinity(pid_t pid, int cpu)
 {
   cpu_set_t cpu_set;
 
   CPU_ZERO(&cpu_set);
   CPU_SET(cpu, &cpu_set);
-  int ret = sched_setaffinity(getpid(), sizeof(cpu_set), &cpu_set);
+  int ret = sched_setaffinity(pid, sizeof(cpu_set), &cpu_set);
   if (ret)
     throw std::runtime_error("Failed to set affinity to " + std::to_string(cpu));
+}
+
+static void set_own_affinity()
+{
+  set_affinity(getpid(), 0);
+}
+
+void rise_priority()
+{
+  // Max priority reserved for the scheduler itself
+  struct sched_param param;
+
+  int max = sched_get_priority_max(SCHED_FIFO);
+
+  struct rlimit rlim;
+  int ret = getrlimit(RLIMIT_RTPRIO, &rlim);
+  assert(ret == 0);
+
+  // cast from long long to int is safe, because values are up to 99
+  max = std::min(max, static_cast<int>(rlim.rlim_max));
+  param.sched_priority = max;
+
+  ret = sched_setscheduler(0, SCHED_FIFO, &param);
+  if (ret) {
+    throw std::runtime_error(std::string("Failed to rise own priority: ") +
+                             std::strerror(errno));
+  }
+}
+
+void drop_priority()
+{
+  // Max priority reserved for the scheduler itself
+  struct sched_param param;
+
+  int min = sched_get_priority_min(SCHED_FIFO);
+
+  // cast from long long to int is safe, because values are up to 99
+  param.sched_priority = min;
+
+  int ret = sched_setscheduler(0, SCHED_FIFO, &param);
+  if (ret) {
+    throw std::runtime_error(std::string("Failed to drop own priority: ") +
+                             std::strerror(errno));
+  }
+}
+
+void schedule_set_priority(pid_t pid, int priority)
+{
+  struct sched_param param;
+
+  int min = sched_get_priority_min(SCHED_FIFO);
+  int max = sched_get_priority_max(SCHED_FIFO);
+
+  // Max reserved for the scheduler itself
+  priority = std::min(priority + min - 1, max - 1);
+
+  param.sched_priority = priority;
+  int ret = sched_setscheduler(pid, SCHED_FIFO, &param);
+
+  assert(ret == 0);
 }
 
 static void check_target_affinity(int cpu, pid_t pid)
@@ -63,7 +135,8 @@ struct Timestep
   uint64_t idle;
 
 
-  void print(std::ostream &os) const {
+  void print(std::ostream &os) const
+  {
     os << tsc << ","
        << utime << ","
        << stime << ","
@@ -72,22 +145,65 @@ struct Timestep
   }
 };
 
-static void init_ts(Timestep &ts)
+std::vector<pid_t> get_partners(const char *argv0)
 {
-  static uint64_t start = 0;
+  auto get_exe = [&](const std::string path) {
+    size_t pos = path.rfind('/');
+    if (pos != std::string::npos)
+      return path.substr(pos + 1);
+    return path;
+  };
 
-  struct timespec tp;
-  clock_gettime(CLOCK_REALTIME, &tp);
+  std::vector<pid_t> pids;
 
-  uint64_t time = tp.tv_sec * 1000 * 1000 * 1000 + tp.tv_nsec;
+  std::string name = get_exe(argv0);
 
-  if (!start)
-    start = time;
+  // XXX: Ensure that all process are started
+  sleep(5);
 
-  if (time < start)
-    throw std::runtime_error("Time can't go backwards");
+  // Open the /proc directory
+  DIR *dp = opendir("/proc");
+  if (dp != NULL) {
+    // Enumerate all entries in directory until process found
+    struct dirent *dirp;
+    while ((dirp = readdir(dp))) {
+      // Skip non-numeric entries
+      int id = atoi(dirp->d_name);
+      if (id > 0) {
+        // Read contents of virtual /proc/{pid}/cmdline file
+        std::string cmdPath = std::string("/proc/") + dirp->d_name + "/cmdline";
+        std::ifstream cmdFile(cmdPath.c_str());
+        std::string cmdLine;
+        getline(cmdFile, cmdLine);
+        if (!cmdLine.empty())
+        {
+          // Keep first cmdline item which contains the program path
+          size_t pos = cmdLine.find('\0');
+          if (pos != std::string::npos)
+            cmdLine = cmdLine.substr(0, pos);
+          // Keep program name only, removing the path
+          cmdLine = get_exe(cmdLine);
+          // Compare against requested process name
+          if (name == cmdLine)
+            pids.push_back(id);
+        }
+      }
+    }
+  }
 
-  ts.tsc = time - start;
+  closedir(dp);
+
+  std::sort(pids.begin(), pids.end(), [](pid_t a, pid_t b) { return a < b; });
+
+  return pids;
+}
+
+bool elect_leader(std::vector<pid_t> partners)
+{
+  pid_t me = getpid();
+  if (me == partners[0])
+    return true;
+  return false;
 }
 
 int read_proc_file(const char *path, char *buf, const int buf_size)
@@ -108,168 +224,138 @@ int read_proc_file(const char *path, char *buf, const int buf_size)
   return ret;
 }
 
-// Checks /proc/[pid]/stat
-const int stat_size = 1024;
-char stat_buf[stat_size];
-
-static bool read_process(const char *proc_path, Timestep &ts)
+std::vector<Task> schedule_rr(const std::vector<pid_t> & pids)
 {
-  int ret = read_proc_file(proc_path, stat_buf, stat_size);
-  if (ret < 0)
-    return false;
-
-  static Timestep start;
-  int i = 1;
-  // How many items we need to read
-  int done = 2;
-  char *pch = strtok(stat_buf, " ");
-  while (pch != NULL) {
-    switch(i) {
-      case 14:
-        // utime
-        sscanf(pch, "%lu", &ts.utime);
-        done --;
-        break;
-      case 15:
-        // stime
-        sscanf(pch, "%lu", &ts.stime);
-        done --;
-        break;
-    }
-    i++;
-    pch = strtok(NULL, " ");
+  std::vector<Task> tasks;
+  int cpu = 0;
+  for (auto pid : pids) {
+    tasks.push_back(Task{pid, cpu});
+    set_affinity(pid, cpu);
+    schedule_set_priority(pid, 1);
+    cpu = (cpu + 1) % ncpu;
   }
 
-  if (!start.utime) {
-    start.utime = ts.utime;
-    start.stime = ts.stime;
-  }
-
-  ts.utime = ts.utime - start.utime;
-  ts.stime = ts.stime - start.stime;
-
-  if (done != 0)
-    throw std::runtime_error("Failed to read right number of items");
-
-  return true;
+  return tasks;
 }
 
-static bool read_noise(const char *proc_path, Timestep &ts)
+void do_new_assignment(std::vector<Task> &schedule)
 {
-  int ret = read_proc_file(proc_path, stat_buf, stat_size);
-  if (ret < 0)
-    return false;
+  for (auto t : schedule)
+    set_affinity(t.pid, t.cpu);
 
-  static Timestep start_ts;
-  int i = 1;
-  // How many items we need to read
-  int done = 2;
-  char *pch = strtok(stat_buf, " ");
-  uint64_t noise;
-  while (pch != NULL) {
-    switch(i) {
-      case 14:
-        // utime
-        sscanf(pch, "%lu", &noise);
-        ts.noise = noise;
-        done --;
-        break;
-      case 15:
-        // stime
-        sscanf(pch, "%lu", &noise);
-        ts.noise += noise;
-        done --;
-        break;
-    }
-    i++;
-    pch = strtok(NULL, " ");
+  // Set priorities. Using stable sort, sort by load, then sort by
+  // core id. As a result we get a vector of tasks grouped by core
+  // and each group sorted by size.
+  std::sort(schedule.begin(), schedule.end(), [](Task a, Task b) {
+      return a.size < b.size;
+    });
+
+  std::stable_sort(schedule.begin(), schedule.end(), [](Task a, Task b) {
+      return a.cpu < b.cpu;
+    });
+
+  unsigned i = 0, prio;
+  while (i < schedule.size()) {
+    prio = 1;
+    do {
+      schedule_set_priority(schedule[i].pid, prio);
+      i++;
+      prio++;
+    } while ((i < schedule.size()) &&
+             (schedule[i].cpu == schedule[i-1].cpu));
   }
-
-  if (!start_ts.noise)
-    start_ts.noise = ts.noise;
-  ts.noise = ts.noise - start_ts.noise;
-
-  if (done != 0)
-    throw std::runtime_error("Failed to read right number of items");
-
-  return true;
 }
 
-void read_core(const char *cpu, Timestep &ts)
+void do_scheduling(std::vector<Task> &tasks)
 {
-  int ret = read_proc_file("/proc/stat", stat_buf, stat_size);
-  if (ret < 0)
-    throw std::runtime_error("Failed to read cpu file");
+  std::vector<uint64_t> load(ncpu);
 
-  // Find core string
-  char *core_str = strtok(stat_buf, "\n");
-  while (core_str != NULL) {
-    if (strstr(core_str, cpu) == core_str)
-      break;
-    core_str = strtok(NULL, "\n");
+  for (auto t : tasks) {
+    load[t.cpu] += t.size;
   }
 
-  if (!core_str)
-    throw std::runtime_error("Failed to find core string");
+  // auto imbalance = [](std::vector<uint64_t> &load) {
+  //   uint64_t sum = std::accumulate(load.begin(), load.end(), 0);
+  //   uint64_t max = *std::max_element(load.begin(), load.end());
+  //   return ((double) max / (double) sum) * load.size();
+  // };
+  // double old_imb = imbalance(load);
 
-  const uint64_t clk_tck = sysconf(_SC_CLK_TCK);
+  double old_rt = *std::max_element(load.begin(), load.end());
 
-  int i = 1;
-  int done = 1;
-  char *pch = strtok(core_str, " ");
-  pch = strtok(NULL, " "); // Skip cpu name
-  while (pch != NULL) {
-    switch(i) {
-      // idle time
-      case 4:
-        static uint64_t idle_start = 0;
-        sscanf(pch, "%lu", &ts.idle);
-        if (!idle_start)
-          idle_start = ts.idle;
-        ts.idle = ts.idle - idle_start;
-        ts.idle = ts.idle * 1000 * 1000 * 1000 / clk_tck;
-        done--;
-        break;
-    }
-    i++;
-    pch = strtok(NULL, " ");
+  // new_schedule we want to try out
+  std::vector<Task> ns(tasks);
+  std::sort(ns.begin(), ns.end(), [](Task a, Task b) {
+      return a.size < b.size;
+    });
+
+  load.assign(load.size(), 0);
+  for (auto &t : ns) {
+    int min_load = std::min_element(load.begin(), load.end()) - load.begin();
+    t.cpu = min_load;
+    load[min_load] += t.size;
   }
 
-  if (done != 0)
-    throw std::runtime_error("Failed to read right number of items from /proc/stat");
+  double new_rt = *std::max_element(load.begin(), load.end());
+
+  // if new schedule at least x% faster ...
+  if (new_rt / 1.05 < old_rt) {
+    do_new_assignment(ns);
+  }
 }
 
-void trace(int cpu, pid_t pid, std::ofstream &log)
+void scheduler(const std::vector<pid_t> pids, std::ofstream &log)
 {
-  set_own_affinity(cpu);
-
-  check_target_affinity(cpu, pid);
+  set_own_affinity();
 
   // Main loop
-  std::vector<Timestep> data;
+  std::vector<Measurement> data;
 
-  const std::string proc_path("/proc/" + std::to_string(pid) + "/stat");
-  const std::string cpu_name("cpu" + std::to_string(cpu));
+  // Allow victims to initialize themselves.
+  sleep(3);
 
+  // Set initial affinity
+  std::vector<Task> tasks = schedule_rr(pids);
+
+  Measurement last;
   while (true) {
-    Timestep ts;
+    Measurement m;
 
-    init_ts(ts);
-    // Finishes when process terminates
-    if(!read_process(proc_path.c_str(), ts))
+    rise_priority();
+
+    // Returns false, when process terminates
+    if(!m.read(pids))
       break;
 
-    read_core(cpu_name.c_str(), ts);
+    m.save_schedule(tasks);
 
-    read_noise("/proc/self/stat", ts);
-    data.push_back(ts);
+    data.push_back(m);
+
+    if (last.valid()) {
+      auto ts = m - last;
+      for (unsigned i = 0; i < tasks.size(); i++) {
+        assert(tasks[i].pid == ts.tasks[i].pid);
+        tasks[i].size = ts.tasks[i].utime + ts.tasks[i].stime + 1;
+      }
+      do_scheduling(tasks);
+    } else {
+      std::cout << "Invalid "
+                << m._tsc << " "
+                << m._noise << " "
+                << m._cores.size() << " "
+                << m.tasks.size() << std::endl;
+    }
+
+    last = m;
+
     // Sleep 100 msec
+    drop_priority();
     usleep(100*1000);
   }
 
   // Dump results
   for (const auto i : data) {
-    log << i << std::endl;
+    i.dump_csv(log);
   }
 
 }
@@ -301,9 +387,9 @@ int main(int argc, char **argv)
     return usage("Wrong number of arguments");
   }
 
-  int cpu;
   std::string cpu_str;
-  if (!int_valid(cpu, cpu_str, argv[1])) {
+  if ((!int_valid(ncpu, cpu_str, argv[1]))
+      || (ncpu < 1) || (ncpu > sysconf(_SC_NPROCESSORS_ONLN))) {
     return usage("<cpu> should be a decimal number");
   }
 
@@ -320,18 +406,32 @@ int main(int argc, char **argv)
   }
 
 
-  std::ofstream log_file(log_name.c_str());
-  if (!log_file) {
-    return usage("Failed to create file: " + log_name);
-  }
-
-  daemon(1, 0);
 
   try {
 
-  trace(cpu, pid, log_file);
+    auto partners = get_partners(argv[0]);
 
-  } catch(std::exception &e) {
+    bool leader = elect_leader(partners);
+
+    Shmem shm(leader, partners, argv[0]);
+
+    shm.report_victims(pid);
+
+    if (!leader)
+      exit(0);
+
+    std::ofstream log_file(log_name.c_str());
+    if (!log_file) {
+      throw std::runtime_error("Failed to create file: " + log_name);
+    }
+
+    sleep(10);
+
+    scheduler(shm.targets(), log_file);
+
+    // daemon(1, 0);
+
+  } catch(std::runtime_error &e) {
     return usage(e.what());
   }
 }
