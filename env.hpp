@@ -7,6 +7,7 @@ struct Env
   int ncpu;
   std::string log_prefix;
   pid_t victim;
+  int sleep;
   bool only_tracing;
   bool debug;
 

@@ -426,7 +426,7 @@ void schedule_loop(const std::vector<pid_t> &pids, std::ofstream &log)
   std::vector<Measurement> data;
 
   // Allow victims to initialize themselves.
-  sleep(3);
+  sleep(Env::env().sleep);
 
   // Set initial affinity
   std::vector<Task> tasks = scheduler->initial_distribution(pids);

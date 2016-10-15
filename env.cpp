@@ -11,6 +11,8 @@ Env::Env(int argc, char **argv) :
   try {
     options_description desc{"Options"};
 
+    // TODO: Need validation for the options
+
     desc.add_options()
       ("help,h", "Help screen")
       ("ncpu", value<int>(&ncpu)->default_value(sysconf(_SC_NPROCESSORS_ONLN)),
@@ -19,6 +21,7 @@ Env::Env(int argc, char **argv) :
        ->default_value(false)->implicit_value(true),
        "Flag to only gather traces")
       ("debug,d", value<bool>(&debug)->default_value(false), "Enable debugging")
+      ("sleep", value<int>(&sleep)->default_value(3), "Sleep before switching on scheduling (allows initialization before setting realtime priorities)")
       ("out,o", value<std::string>(&log_prefix)->required(), "Prefix for output file")
       ("pid,p", value<pid_t>(&victim)->required(), "Process id of a victim");
 
