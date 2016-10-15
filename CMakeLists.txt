@@ -24,6 +24,7 @@ set(idle_stat_SOURCES
   env.cpp
   idle_stat.cpp
   measurement.cpp
+  scheduler.cpp
   shmem.cpp)
 
 add_executable(idle_stat ${idle_stat_SOURCES})

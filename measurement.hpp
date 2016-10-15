@@ -1,5 +1,7 @@
 #pragma once
 
+#include <fstream>
+
 #include "tasks.hpp"
 
 struct TaskTime
