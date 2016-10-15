@@ -34,7 +34,23 @@ public:
   void do_scheduling(std::vector<Task> &tasks){ (void) tasks; }
 };
 
-class DefaultScheduler : public Scheduler
+class PinnedRR : public Scheduler
+{
+protected:
+
+  std::vector<Task> schedule_rr(const std::vector<pid_t> & pids);
+
+public:
+  PinnedRR(const Env& env) : Scheduler(env) { (void) env; }
+  ~PinnedRR() {}
+
+  std::vector<Task> initial_distribution(const std::vector<pid_t> &pids);
+
+  void do_scheduling(std::vector<Task> &tasks){ (void) tasks; }
+
+};
+
+class DefaultScheduler : public PinnedRR
 {
 protected:
   typedef std::map<pid_t, std::set<pid_t> > ChildrenMap;
@@ -52,7 +68,7 @@ protected:
   std::vector<Task> schedule_rr(const std::vector<pid_t> & pids);
 
 public:
-  DefaultScheduler(const Env& env) : Scheduler(env) { (void) env; }
+  DefaultScheduler(const Env& env) : PinnedRR(env) { (void) env; }
   ~DefaultScheduler() {}
 
   std::vector<Task> initial_distribution(const std::vector<pid_t> &pids);

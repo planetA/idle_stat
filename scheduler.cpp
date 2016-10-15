@@ -159,6 +159,29 @@ std::vector<Task> Tracer::initial_distribution(const std::vector<pid_t> &pids)
   return tasks;
 }
 
+// PinnedRR
+
+std::vector<Task> PinnedRR::schedule_rr(const std::vector<pid_t> & pids)
+{
+  std::vector<Task> tasks;
+  int cpu = 0;
+  for (auto pid : pids) {
+    tasks.push_back(Task{pid, cpu});
+    set_affinity(pid, cpu);
+    schedule_set_priority(pid, 1);
+    cpu = (cpu + 1) % Env::env().ncpu;
+  }
+
+  return tasks;
+}
+
+auto PinnedRR::initial_distribution(const std::vector<pid_t> &pids) ->
+  std::vector<Task>
+{
+  return schedule_rr(pids);
+}
+
+
 // DefaultScheduler
 
 void DefaultScheduler::do_new_assignment(std::vector<Task> &schedule)
@@ -240,25 +263,11 @@ auto DefaultScheduler::find_children(const std::vector<pid_t> &pids) ->
   return res;
 }
 
-std::vector<Task> DefaultScheduler::schedule_rr(const std::vector<pid_t> & pids)
-{
-  std::vector<Task> tasks;
-  int cpu = 0;
-  for (auto pid : pids) {
-    tasks.push_back(Task{pid, cpu});
-    set_affinity(pid, cpu);
-    schedule_set_priority(pid, 1);
-    cpu = (cpu + 1) % Env::env().ncpu;
-  }
-
-  return tasks;
-}
-
 auto DefaultScheduler::initial_distribution(const std::vector<pid_t> &pids) ->
   std::vector<Task>
 {
   children = find_children(pids);
-  return schedule_rr(pids);
+  return PinnedRR::schedule_rr(pids);
 }
 
 void DefaultScheduler::do_scheduling(std::vector<Task> &tasks)
