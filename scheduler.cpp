@@ -299,7 +299,10 @@ void DefaultScheduler::do_scheduling(std::vector<Task> &tasks)
   }
 }
 
-std::unique_ptr<Scheduler> create_scheduler(const Env &env)
+
+// Scheduler factory
+
+std::unique_ptr<Scheduler> Scheduler::create(const Env &env)
 {
   if (env.only_tracing)
     return std::unique_ptr<Scheduler>(new Tracer(env));

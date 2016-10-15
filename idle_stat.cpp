@@ -227,7 +227,7 @@ int main(int argc, char **argv)
 
   sleep(10);
 
-  std::unique_ptr<Scheduler> scheduler = create_scheduler(Env::env());
+  std::unique_ptr<Scheduler> scheduler = Scheduler::create(Env::env());
 
   scheduler->loop(shm.targets(), log_file);
 

@@ -20,6 +20,8 @@ public:
 
   virtual std::vector<Task> initial_distribution(const std::vector<pid_t> &pids) = 0;
   virtual void do_scheduling(std::vector<Task> &tasks) = 0;
+
+  static std::unique_ptr<Scheduler> create(const Env &env);
 };
 
 class Tracer : public Scheduler
@@ -58,5 +60,3 @@ public:
   void do_scheduling(std::vector<Task> &tasks);
 
 };
-
-std::unique_ptr<Scheduler> create_scheduler(const Env &env);
