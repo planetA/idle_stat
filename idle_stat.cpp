@@ -58,6 +58,107 @@ void schedule_set_priority(pid_t pid, int priority)
 
 class Scheduler
 {
+
+  void set_own_affinity()
+  {
+    set_affinity(getpid(), 0);
+  }
+
+  void rise_priority()
+  {
+    // Max priority reserved for the scheduler itself
+    struct sched_param param;
+
+    int max = sched_get_priority_max(SCHED_FIFO);
+
+    struct rlimit rlim;
+    int ret = getrlimit(RLIMIT_RTPRIO, &rlim);
+    assert(ret == 0);
+
+    // cast from long long to int is safe, because values are up to 99
+    max = std::min(max, static_cast<int>(rlim.rlim_max));
+    param.sched_priority = max;
+
+    ret = sched_setscheduler(0, SCHED_FIFO, &param);
+    if (ret) {
+      throw std::runtime_error(std::string("Failed to rise own priority: ") +
+                               std::strerror(errno));
+    }
+  }
+
+  void drop_priority()
+  {
+    // Max priority reserved for the scheduler itself
+    struct sched_param param;
+
+    int min = sched_get_priority_min(SCHED_FIFO);
+
+    // cast from long long to int is safe, because values are up to 99
+    param.sched_priority = min;
+
+    int ret = sched_setscheduler(0, SCHED_FIFO, &param);
+    if (ret) {
+      throw std::runtime_error(std::string("Failed to drop own priority: ") +
+                               std::strerror(errno));
+    }
+  }
+public:
+  void loop(const std::vector<pid_t> &pids, std::ofstream &log)
+  {
+    set_own_affinity();
+
+    // Main loop
+    std::vector<Measurement> data;
+
+    // Allow victims to initialize themselves.
+    sleep(Env::env().sleep);
+
+    // Set initial affinity
+    std::vector<Task> tasks = this->initial_distribution(pids);
+
+    Measurement last;
+    while (true) {
+      Measurement m;
+
+      rise_priority();
+
+      // Returns false, when process terminates
+      if(!m.read(pids))
+        break;
+
+      m.save_schedule(tasks);
+
+      data.push_back(m);
+
+      if (last.valid()) {
+        auto ts = m - last;
+        for (unsigned i = 0; i < tasks.size(); i++) {
+          assert(tasks[i].pid == ts.tasks[i].pid);
+          tasks[i].size = ts.tasks[i].utime + ts.tasks[i].stime + 1;
+        }
+        this->do_scheduling(tasks);
+      } else {
+        std::cout << "Invalid "
+                  << m._tsc << " "
+                  << m._noise << " "
+                  << m._cores.size() << " "
+                  << m.tasks.size() << std::endl;
+      }
+
+      last = m;
+
+      // Sleep 100 msec
+      drop_priority();
+      usleep(100*1000);
+    }
+
+    // Dump results
+    for (const auto i : data) {
+      i.dump_csv(log);
+    }
+
+  }
+
 public:
   Scheduler(const Env& env) { (void) env; };
   virtual ~Scheduler() {};
@@ -244,8 +345,6 @@ std::unique_ptr<Scheduler> create_scheduler(const Env &env)
     return std::unique_ptr<Scheduler>(new DefaultScheduler(env));
 }
 
-std::unique_ptr<Scheduler> scheduler;
-
 using std::strtok;
 
 template<class T>
@@ -253,50 +352,6 @@ auto operator<<(std::ostream& os, const T& t) -> decltype(t.print(os), os)
 {
     t.print(os);
     return os;
-}
-
-static void set_own_affinity()
-{
-  set_affinity(getpid(), 0);
-}
-
-void rise_priority()
-{
-  // Max priority reserved for the scheduler itself
-  struct sched_param param;
-
-  int max = sched_get_priority_max(SCHED_FIFO);
-
-  struct rlimit rlim;
-  int ret = getrlimit(RLIMIT_RTPRIO, &rlim);
-  assert(ret == 0);
-
-  // cast from long long to int is safe, because values are up to 99
-  max = std::min(max, static_cast<int>(rlim.rlim_max));
-  param.sched_priority = max;
-
-  ret = sched_setscheduler(0, SCHED_FIFO, &param);
-  if (ret) {
-    throw std::runtime_error(std::string("Failed to rise own priority: ") +
-                             std::strerror(errno));
-  }
-}
-
-void drop_priority()
-{
-  // Max priority reserved for the scheduler itself
-  struct sched_param param;
-
-  int min = sched_get_priority_min(SCHED_FIFO);
-
-  // cast from long long to int is safe, because values are up to 99
-  param.sched_priority = min;
-
-  int ret = sched_setscheduler(0, SCHED_FIFO, &param);
-  if (ret) {
-    throw std::runtime_error(std::string("Failed to drop own priority: ") +
-                             std::strerror(errno));
-  }
 }
 
 
@@ -418,61 +473,6 @@ int read_proc_file(const char *path, char *buf, const int buf_size)
   return ret;
 }
 
-void schedule_loop(const std::vector<pid_t> &pids, std::ofstream &log)
-{
-  set_own_affinity();
-
-  // Main loop
-  std::vector<Measurement> data;
-
-  // Allow victims to initialize themselves.
-  sleep(Env::env().sleep);
-
-  // Set initial affinity
-  std::vector<Task> tasks = scheduler->initial_distribution(pids);
-
-  Measurement last;
-  while (true) {
-    Measurement m;
-
-    rise_priority();
-
-    // Returns false, when process terminates
-    if(!m.read(pids))
-      break;
-
-    m.save_schedule(tasks);
-
-    data.push_back(m);
-
-    if (last.valid()) {
-      auto ts = m - last;
-      for (unsigned i = 0; i < tasks.size(); i++) {
-        assert(tasks[i].pid == ts.tasks[i].pid);
-        tasks[i].size = ts.tasks[i].utime + ts.tasks[i].stime + 1;
-      }
-      scheduler->do_scheduling(tasks);
-    } else {
-      std::cout << "Invalid "
-                << m._tsc << " "
-                << m._noise << " "
-                << m._cores.size() << " "
-                << m.tasks.size() << std::endl;
-    }
-
-    last = m;
-
-    // Sleep 100 msec
-    drop_priority();
-    usleep(100*1000);
-  }
-
-  // Dump results
-  for (const auto i : data) {
-    i.dump_csv(log);
-  }
-
-}
 
 inline bool int_valid(int &i, std::string &i_str, const char *str)
 {
@@ -544,9 +544,9 @@ int main(int argc, char **argv)
 
   sleep(10);
 
-  scheduler = create_scheduler(Env::env());
+  std::unique_ptr<Scheduler> scheduler = create_scheduler(Env::env());
 
-  schedule_loop(shm.targets(), log_file);
+  scheduler->loop(shm.targets(), log_file);
 
   // daemon(1, 0);
 }
