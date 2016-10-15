@@ -5,11 +5,14 @@
 struct Env
 {
   int ncpu;
-  std::string log_prefix;
-  pid_t victim;
   int sleep;
-  bool only_tracing;
+
+  pid_t victim;
+
   bool debug;
+
+  std::string log_prefix;
+  std::string scheduler;
 
   Env(int argc, char **argv);
   Env() : initialized(false) {}

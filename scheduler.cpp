@@ -313,8 +313,12 @@ void DefaultScheduler::do_scheduling(std::vector<Task> &tasks)
 
 std::unique_ptr<Scheduler> Scheduler::create(const Env &env)
 {
-  if (env.only_tracing)
+  if (env.scheduler == "tracer")
     return std::unique_ptr<Scheduler>(new Tracer(env));
-  else
+  else if (env.scheduler == "pinnedrr")
+    return std::unique_ptr<Scheduler>(new PinnedRR(env));
+  else if (env.scheduler == "default")
     return std::unique_ptr<Scheduler>(new DefaultScheduler(env));
+  else
+    throw std::runtime_error("Unknown scheduler name: " + env.scheduler);
 }

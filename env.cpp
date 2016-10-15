@@ -17,9 +17,7 @@ Env::Env(int argc, char **argv) :
       ("help,h", "Help screen")
       ("ncpu", value<int>(&ncpu)->default_value(sysconf(_SC_NPROCESSORS_ONLN)),
        "Number of used cores")
-      ("trace,c", value<bool>(&only_tracing)
-       ->default_value(false)->implicit_value(true),
-       "Flag to only gather traces")
+      ("sched", value<std::string>(&scheduler)->default_value("default"), "Pick a scheduler")
       ("debug,d", value<bool>(&debug)->default_value(false), "Enable debugging")
       ("sleep", value<int>(&sleep)->default_value(3), "Sleep before switching on scheduling (allows initialization before setting realtime priorities)")
       ("out,o", value<std::string>(&log_prefix)->required(), "Prefix for output file")
@@ -50,9 +48,11 @@ const Env &Env::env(int argc, char **argv)
 
 std::ostream &Env::operator<<(std::ostream &os)
 {
-  os << "NCPU : " << ncpu << std::endl
-     << "Tracing : " << only_tracing << std::endl
-     << "log_prefix : " << log_prefix << std::endl
-     << "victim : " << victim << std::endl;
+  os << "NCPU : "           << ncpu       << std::endl
+     << "Scheduler : "      << scheduler  << std::endl
+     << "log_prefix : "     << log_prefix << std::endl
+     << "victim : "         << victim     << std::endl
+     << "Activate after : " << sleep      << std::endl
+     << "Debug : "          << debug      << std::endl;
   return os;
 }
