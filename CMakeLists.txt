@@ -13,11 +13,15 @@ endif ()
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pedantic -Wextra")
 
 set(Boost_USE_STATIC_LIBS   ON)
-find_package(Boost 1.54.0 COMPONENTS system thread REQUIRED)
+find_package(Boost 1.54.0
+  COMPONENTS system thread program_options
+  REQUIRED)
+
 include_directories(${Boost_INCLUDE_DIRS})
 
 
 set(idle_stat_SOURCES
+  env.cpp
   idle_stat.cpp
   measurement.cpp
   shmem.cpp)
