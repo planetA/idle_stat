@@ -39,7 +39,7 @@ static void set_affinity(pid_t pid, int cpu)
   cpu_set_t cpu_set;
 
   CPU_ZERO(&cpu_set);
-  CPU_SET(cpu, &cpu_set);
+  CPU_SET(Env::env().cpu_list.cpus[cpu], &cpu_set);
   int ret = sched_setaffinity(pid, sizeof(cpu_set), &cpu_set);
   if (ret)
     throw std::runtime_error("Failed to set affinity to " + std::to_string(cpu));
@@ -169,7 +169,7 @@ std::vector<Task> PinnedRR::schedule_rr(const std::vector<pid_t> & pids)
     tasks.push_back(Task{pid, cpu});
     set_affinity(pid, cpu);
     schedule_set_priority(pid, 1);
-    cpu = (cpu + 1) % Env::env().ncpu;
+    cpu = (cpu + 1) % Env::env().cpu_list.cpus.size();
   }
 
   return tasks;
@@ -272,7 +272,7 @@ auto DefaultScheduler::initial_distribution(const std::vector<pid_t> &pids) ->
 
 void DefaultScheduler::do_scheduling(std::vector<Task> &tasks)
 {
-  std::vector<uint64_t> load(Env::env().ncpu);
+  std::vector<uint64_t> load(Env::env().cpu_list.cpus.size());
 
   for (auto t : tasks) {
     load[t.cpu] += t.size;

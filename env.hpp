@@ -21,7 +21,6 @@ struct Env
   std::string log_prefix;
   std::string scheduler;
 
-  int ncpu;
   CpuList cpu_list;
 
   Env(int argc, char **argv);

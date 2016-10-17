@@ -64,7 +64,7 @@ CpuList::CpuList(const std::string &cpu_string)
 
 void validate(boost::any& v,
               const std::vector<std::string>& values,
-              CpuList* target_type, std::string)
+              CpuList* target_type, int)
 {
   (void) target_type;
 
@@ -87,8 +87,7 @@ Env::Env(int argc, char **argv) :
 
     desc.add_options()
       ("help,h", "Help screen")
-      ("ncpu", value<int>(&ncpu)->default_value(sysconf(_SC_NPROCESSORS_ONLN)),
-       "Number of used cores")
+      ("cpus,c", value<CpuList>(&cpu_list)->default_value(std::string("all")), "List of used cores")
       ("sched", value<std::string>(&scheduler)->default_value("default"), "Pick a scheduler")
       ("debug,d", value<bool>(&debug)->default_value(false), "Enable debugging")
       ("sleep", value<int>(&sleep)->default_value(3), "Sleep before switching on scheduling (allows initialization before setting realtime priorities)")
@@ -103,6 +102,7 @@ Env::Env(int argc, char **argv) :
       std::cout << desc << std::endl;
   } catch (const error &ex) {
     std::cerr << ex.what() << std::endl;
+    throw ex;
   }
 }
 
@@ -118,9 +118,19 @@ const Env &Env::env(int argc, char **argv)
   return env;
 }
 
+
+std::ostream &operator<<(std::ostream &os, const CpuList &cpu_list)
+{
+  for (unsigned i = 0; i < cpu_list.cpus.size(); i++) {
+    os << cpu_list.cpus[i];
+    if (i) os << ",";
+  }
+  return os;
+}
+
 std::ostream &Env::operator<<(std::ostream &os)
 {
-  os << "NCPU : "           << ncpu       << std::endl
+  os << "Cpu list : "       << cpu_list   << std::endl
      << "Scheduler : "      << scheduler  << std::endl
      << "log_prefix : "     << log_prefix << std::endl
      << "victim : "         << victim     << std::endl
