@@ -1,9 +1,78 @@
 #include <iostream>
 #include <boost/program_options.hpp>
+#include <boost/regex.hpp>
 
 #include "env.hpp"
 
 using namespace boost::program_options;
+
+CpuList::CpuList(const std::string &cpu_string)
+{
+
+  if (cpu_string == "all") {
+    for (int i = 0; i < sysconf(_SC_NPROCESSORS_ONLN); i++) {
+      cpus.push_back(i);
+    }
+    return;
+  }
+
+  // static boost::regex r("(\\d+|\\d+-\\d+)?");
+  static boost::regex r("^,?(\\d+-\\d+|\\d+)(,\\d+-\\d+|,\\d+)?(,\\d+-\\d+|,\\d+)*$");
+
+  // Do regex match and convert the interesting part to
+  // int.
+  boost::smatch what;
+  if (!boost::regex_match(cpu_string, what, r)) {
+    throw validation_error(validation_error::invalid_option_value);
+  }
+
+  std::string::const_iterator start = cpu_string.begin();
+  std::string::const_iterator end = cpu_string.end();
+  while (boost::regex_search(start, end, what, r)) {
+    // what[1] single or a range of cpus
+    if (!what[1].matched)
+      throw validation_error(validation_error::invalid_option_value);
+
+    std::string stest(what[1].first, what[1].second);
+    auto minus = stest.find('-');
+    if (minus == std::string::npos) {
+      int value;
+      try {
+        value = std::stoi(stest);
+      } catch (std::exception &e) {
+        throw validation_error(validation_error::invalid_option_value);
+      }
+      cpus.push_back(value);
+    } else {
+      auto s = std::stoi(stest.substr(0, minus));
+      auto e = std::stoi(stest.substr(minus+1));
+
+      if (s > e)
+        throw validation_error(validation_error::invalid_option_value);
+
+      for (int cpu = s; cpu<=e; cpu++)
+        cpus.push_back(cpu);
+    }
+    start = what[2].first;
+  }
+
+  std::sort(cpus.begin(), cpus.end());
+}
+
+void validate(boost::any& v,
+              const std::vector<std::string>& values,
+              CpuList* target_type, std::string)
+{
+  (void) target_type;
+
+  // Make sure no previous assignment to 'a' was made.
+  validators::check_first_occurrence(v);
+  // Extract the first string from 'values'. If there is more than
+  // one string, it's an error, and exception will be thrown.
+  const std::string& s = validators::get_single_string(values);
+
+  v = boost::any(CpuList(s));
+}
 
 Env::Env(int argc, char **argv) :
   initialized(true)

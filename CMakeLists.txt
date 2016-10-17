@@ -14,11 +14,11 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -pedantic -Wextra")
 
 set(Boost_USE_STATIC_LIBS   ON)
 find_package(Boost 1.54.0
-  COMPONENTS system thread program_options
+  COMPONENTS system thread program_options regex
   REQUIRED)
 
 include_directories(${Boost_INCLUDE_DIRS})
-
+include_directories(${CMAKE_SOURCE_DIR})
 
 set(idle_stat_SOURCES
   env.cpp
@@ -33,3 +33,11 @@ target_link_libraries(idle_stat ${Boost_LIBRARIES} rt)
 target_link_libraries(idle_stat -static-libgcc -static-libstdc++)
 
 set_property(TARGET idle_stat PROPERTY CXX_STANDARD_REQUIRED 11)
+
+# Options. Turn on with 'cmake -Dtest=ON'.
+option(test "Build all tests." OFF) # Makes boolean 'test' available.
+
+if (test)
+  enable_testing()
+  add_subdirectory(test)
+endif()

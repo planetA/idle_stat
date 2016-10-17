@@ -2,9 +2,16 @@
 
 #include <iostream>
 
+struct CpuList {
+public:
+  CpuList() {}
+  CpuList(const std::string &cpu_string);
+
+  std::vector<int> cpus;
+};
+
 struct Env
 {
-  int ncpu;
   int sleep;
 
   pid_t victim;
@@ -13,6 +20,9 @@ struct Env
 
   std::string log_prefix;
   std::string scheduler;
+
+  int ncpu;
+  CpuList cpu_list;
 
   Env(int argc, char **argv);
   Env() : initialized(false) {}
