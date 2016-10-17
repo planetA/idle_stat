@@ -47,6 +47,15 @@ TEST(cpu_list_test, mixed_list) {
   SUCCEED();
 }
 
+TEST(cpu_list_test, duplicates) {
+  CpuList cpu_list("3-5,1,5-6,3-7,15");
+
+  EXPECT_EQ(cpu_list.cpus.size(), 7);
+  EXPECT_TRUE((cpu_list.cpus ==
+               std::vector<int>{1, 3, 4, 5, 6, 7, 15}));
+  SUCCEED();
+}
+
 TEST(cpu_list_test, exceptions_test) {
   EXPECT_THROW(CpuList("sth"),  validation_error);
   EXPECT_THROW(CpuList("a"),  validation_error);
@@ -62,6 +71,8 @@ TEST(cpu_list_test, exceptions_test) {
   EXPECT_THROW(CpuList("5-3,-6"),  validation_error);
   EXPECT_THROW(CpuList("5-3,"),  validation_error);
   EXPECT_THROW(CpuList("5-3,8-7"),  validation_error);
+
+  EXPECT_THROW(CpuList(",3-5,7-8"),  validation_error);
 
   EXPECT_NO_THROW(CpuList("5"));
   EXPECT_NO_THROW(CpuList("5,6,7"));

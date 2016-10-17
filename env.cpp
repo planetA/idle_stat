@@ -17,7 +17,7 @@ CpuList::CpuList(const std::string &cpu_string)
   }
 
   // static boost::regex r("(\\d+|\\d+-\\d+)?");
-  static boost::regex r("^,?(\\d+-\\d+|\\d+)(,\\d+-\\d+|,\\d+)?(,\\d+-\\d+|,\\d+)*$");
+  static boost::regex r("^(\\d+-\\d+|\\d+)(,\\d+-\\d+|,\\d+)?(,\\d+-\\d+|,\\d+)*$");
 
   // Do regex match and convert the interesting part to
   // int.
@@ -54,9 +54,12 @@ CpuList::CpuList(const std::string &cpu_string)
         cpus.push_back(cpu);
     }
     start = what[2].first;
+    if (*start == ',')
+      start++;
   }
 
   std::sort(cpus.begin(), cpus.end());
+  cpus.erase(std::unique(cpus.begin(), cpus.end()), cpus.end());
 }
 
 void validate(boost::any& v,
