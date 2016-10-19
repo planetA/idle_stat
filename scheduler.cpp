@@ -34,15 +34,37 @@ static void schedule_set_priority(pid_t pid, int priority)
   assert(ret == 0);
 }
 
+static void set_affinity(pid_t pid, cpu_set_t &cpu_set)
+{
+  int ret = sched_setaffinity(pid, sizeof(cpu_set), &cpu_set);
+  if (ret)
+    throw std::runtime_error("Failed to set affinity");
+}
+
+/**
+ *  Set affinity to a particular cpu
+ */
 static void set_affinity(pid_t pid, int cpu)
 {
   cpu_set_t cpu_set;
 
   CPU_ZERO(&cpu_set);
   CPU_SET(Env::env().cpu_list.cpus[cpu], &cpu_set);
-  int ret = sched_setaffinity(pid, sizeof(cpu_set), &cpu_set);
-  if (ret)
-    throw std::runtime_error("Failed to set affinity to " + std::to_string(cpu));
+  set_affinity(pid, cpu_set);
+}
+
+/**
+ *  Set affinity to all allowed cpus
+ */
+
+static void set_affinity(pid_t pid)
+{
+  cpu_set_t cpu_set;
+
+  CPU_ZERO(&cpu_set);
+  for (auto i : Env::env().cpu_list.cpus)
+    CPU_SET(i, &cpu_set);
+  set_affinity(pid, cpu_set);
 }
 
 static void set_own_affinity()
@@ -154,8 +176,10 @@ void Scheduler::loop(const std::vector<pid_t> &pids, std::ofstream &log)
 std::vector<Task> Tracer::initial_distribution(const std::vector<pid_t> &pids)
 {
   std::vector<Task> tasks;
-  for (auto pid : pids)
+  for (auto pid : pids) {
     tasks.push_back(Task{pid, 0});
+    set_affinity(pid);
+  }
   return tasks;
 }
 
